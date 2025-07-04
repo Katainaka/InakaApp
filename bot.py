@@ -225,7 +225,7 @@ async def check_reminders():
         channel = bot.get_channel(int(channel_id))
         if channel:
             try:
-                embed = discord.Embed(title="⏰ Напоминание!", description=f"<@{user_id}> — {task}", color=discord.Color.gold())
+                embed = discord.Embed(title="⏰ Напоминание!", description=f"{task}", color=discord.Color.gold())
                 await channel.send(f"<@{user_id}>", embed=embed)
             except Exception as e:
                 print(f"⚠️ Ошибка отправки: {e}")
