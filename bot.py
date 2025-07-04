@@ -271,7 +271,7 @@ async def check_reminders():
             if channel:
                 embed = discord.Embed(
                     title="⏰ Напоминание!",
-                    description=f"<@{user_id}> — {task}",
+                    description=f"{task}",
                     color=discord.Color.gold()
                 )
                 await channel.send(f"<@{user_id}>", embed=embed)
