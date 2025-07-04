@@ -118,6 +118,7 @@ async def add(ctx, name: str, *, time_str: str):
 
 @bot.command(name="list")
 async def list_tasks(ctx):
+    await ctx.message.delete()
     user_id = str(ctx.author.id)
     cursor.execute("SELECT id, task, remind_time, repeat_interval FROM reminders WHERE user_id=?", (user_id,))
     tasks = cursor.fetchall()
