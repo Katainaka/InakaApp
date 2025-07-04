@@ -223,7 +223,7 @@ async def set_repeat(ctx, position: int, interval: str):
     await ctx.message.add_reaction("✅")
 
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=1)
 async def check_reminders():
     now = datetime.datetime.now(tz=pytz.utc)
     cursor.execute(
