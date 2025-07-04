@@ -114,10 +114,27 @@ async def add(ctx, name: str, *, time_str: str):
     conn.commit()
 
     await ctx.message.add_reaction("✅")
-
+    
+@bot.command(name="testdelete")
+async def testdelete(ctx):
+    try:
+        await ctx.message.delete()
+        print("✅ Сообщение успешно удалено через testdelete")
+    except Exception as e:
+        print(f"❌ Ошибка при удалении: {e}")
 
 @bot.command(name="list")
 async def list_tasks(ctx):
+    # Попытка удалить команду пользователя
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        print("❌ Бот не имеет права управлять сообщениями.")
+    except discord.NotFound:
+        print("⚠ Сообщение не найдено или уже удалено.")
+    except Exception as e:
+        print(f"❌ Неизвестная ошибка при удалении сообщения: {e}")
+
     user_id = str(ctx.author.id)
     cursor.execute("SELECT id, task, remind_time, repeat_interval FROM reminders WHERE user_id=?", (user_id,))
     tasks = cursor.fetchall()
@@ -132,7 +149,6 @@ async def list_tasks(ctx):
         await msg.delete(delay=60)
         return
 
-    # Разбиваем задачи на страницы по 5 штук
     PAGE_SIZE = 5
     pages = [tasks[i:i + PAGE_SIZE] for i in range(0, len(tasks), PAGE_SIZE)]
     current_page = 0
@@ -174,17 +190,9 @@ async def list_tasks(ctx):
             view.add_item(prev_button)
             view.add_item(next_button)
 
-        # Отправляем сообщение
+        # Отправляем Embed
         msg = await ctx.send(embed=embed, view=view)
-        await msg.delete(delay=60)  # Удаление через 60 секунд
-
-    # Попытка удалить команду пользователя
-    try:
-        await ctx.message.delete()  # Удаляем команду "rm list"
-    except discord.Forbidden:
-        print("❌ Бот не имеет права управлять сообщениями.")
-    except discord.NotFound:
-        print("⚠ Сообщение не найдено или уже удалено.")
+        await msg.delete(delay=60)
 
     await update_message(0)
 
