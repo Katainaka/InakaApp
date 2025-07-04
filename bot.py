@@ -273,34 +273,34 @@ async def check_reminders():
         return
 
     for row in rows:
-    rid, user_id, channel_id, task, repeat = row
-    try:
-        channel = bot.get_channel(int(channel_id))
-        if channel:
-            embed = discord.Embed(
-                title="⏰ Напоминание!",
-                description=f"<@{user_id}> — {task}",
-                color=discord.Color.gold()
-            )
-            await channel.send(f"<@{user_id}>", embed=embed)
+        rid, user_id, channel_id, task, repeat = row
+        try:
+            channel = bot.get_channel(int(channel_id))
+            if channel:
+                embed = discord.Embed(
+                    title="⏰ Напоминание!",
+                    description=f"<@{user_id}> — {task}",
+                    color=discord.Color.gold()
+                )
+                await channel.send(f"<@{user_id}>", embed=embed)
 
-        # Удаление или обновление времени
-        if repeat == "daily":
-            new_time = now + datetime.timedelta(days=1)
-        elif repeat == "hourly":
-            new_time = now + datetime.timedelta(hours=1)
-        else:
+            # Удаление или обновление времени
+            if repeat == "daily":
+                new_time = now + datetime.timedelta(days=1)
+            elif repeat == "hourly":
+                new_time = now + datetime.timedelta(hours=1)
+            else:
+                cursor.execute("DELETE FROM reminders WHERE id=?", (rid,))
+                conn.commit()
+                continue
+
+            cursor.execute("UPDATE reminders SET remind_time=? WHERE id=?", (new_time.isoformat(), rid))
+            conn.commit()
+
+        except Exception as e:
+            print(f"Ошибка при отправке напоминания пользователю {user_id}: {e}")
             cursor.execute("DELETE FROM reminders WHERE id=?", (rid,))
             conn.commit()
-            continue
-
-        cursor.execute("UPDATE reminders SET remind_time=? WHERE id=?", (new_time.isoformat(), rid))
-        conn.commit()
-
-    except Exception as e:
-        print(f"Ошибка при отправке напоминания пользователю {user_id}: {e}")
-        cursor.execute("DELETE FROM reminders WHERE id=?", (rid,))
-        conn.commit()
         
 @bot.command(name="help")
 async def help_command(ctx):
