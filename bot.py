@@ -223,7 +223,7 @@ async def set_repeat(ctx, position: int, interval: str):
     await ctx.message.add_reaction("✅")
 
 
-@tasks.loop(seconds=1)
+@tasks.loop(seconds=10)
 async def check_reminders():
     now = datetime.datetime.now(tz=pytz.utc)
     cursor.execute(
@@ -231,6 +231,9 @@ async def check_reminders():
         (now.isoformat(),)
     )
     rows = cursor.fetchall()
+
+    if not rows:
+        return
 
     for row in rows:
         rid, user_id, channel_id, task, repeat = row
