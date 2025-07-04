@@ -118,7 +118,6 @@ async def add(ctx, name: str, *, time_str: str):
 
 @bot.command(name="list")
 async def list_tasks(ctx):
-    await ctx.message.delete()
     user_id = str(ctx.author.id)
     cursor.execute("SELECT id, task, remind_time, repeat_interval FROM reminders WHERE user_id=?", (user_id,))
     tasks = cursor.fetchall()
@@ -178,7 +177,7 @@ async def list_tasks(ctx):
         # Отправляем сообщение
         msg = await ctx.send(embed=embed, view=view)
         await msg.delete(delay=60)  # Удаление через 60 секунд
-
+        await ctx.message.delete(delay=10)
     await update_message(0)
 
 
