@@ -177,7 +177,15 @@ async def list_tasks(ctx):
         # Отправляем сообщение
         msg = await ctx.send(embed=embed, view=view)
         await msg.delete(delay=60)  # Удаление через 60 секунд
-        await ctx.message.delete(delay=10)
+
+    # Попытка удалить команду пользователя
+    try:
+        await ctx.message.delete()  # Удаляем команду "rm list"
+    except discord.Forbidden:
+        print("❌ Бот не имеет права управлять сообщениями.")
+    except discord.NotFound:
+        print("⚠ Сообщение не найдено или уже удалено.")
+
     await update_message(0)
 
 
