@@ -95,40 +95,48 @@ async def on_ready():
 
 @bot.command(name="add")
 async def add(ctx, *, args: str):
-    # Пытаемся отделить время от задачи (по последнему числу или ключевому слову)
-    time_keywords = ['через', 'в', 'на', 'tomorrow', 'today', 'at', 'in', 'on']
-
-    words = args.split()
-    split_index = -1
-
-    # Ищем возможное начало временной метки
-    for i in reversed(range(len(words))):
-        if words[i].lower() in time_keywords or any(c.isdigit() for c in words[i]):
-            split_index = i
-            break
-
-    if split_index == -1:
-        # Не нашли ни одного подходящего слова → попробуй разделить по последнему слову
-        split_index = len(words) - 1
-
-    name = " ".join(words[:split_index]).strip()
-    time_str = " ".join(words[split_index:]).strip()
-
-    # Парсим время
-    remind_time = parse_relative_time(time_str)
+    # Попробуем разделить задачу и время
+    remind_time = parse_relative_time(args)
+    
     if not remind_time:
-        remind_time = dateparser.parse(time_str, settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True})
+        # Если относительное время не подошло — пробуем как абсолютную дату
+        remind_time = dateparser.parse(
+            args,
+            settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True}
+        )
 
     if not remind_time:
         await ctx.message.add_reaction("❌")
         return
+
+    # Проверяем, не попали ли мы в прошлое
+    now = datetime.datetime.now(tz=pytz.utc)
+    if remind_time < now:
+        try:
+            # Пробуем интерпретировать как будущее время
+            remind_time = dateparser.parse(
+                args,
+                settings={
+                    'TIMEZONE': '+0300',
+                    'RETURN_AS_TIMEZONE_AWARE': True,
+                    'PREFER_DATES_FROM': 'future'
+                }
+            )
+            if not remind_time or remind_time < now:
+                await ctx.send("❌ Не удалось определить корректное будущее время.", delete_after=10)
+                await ctx.message.add_reaction("❌")
+                return
+        except Exception as e:
+            print(f"Ошибка при вторичном парсинге: {e}")
+            await ctx.message.add_reaction("❌")
+            return
 
     user_id = str(ctx.author.id)
     channel_id = str(ctx.channel.id)
 
     cursor.execute(
         "INSERT INTO reminders (user_id, channel_id, task, remind_time, repeat_interval) VALUES (?, ?, ?, ?, ?)",
-        (user_id, channel_id, name, remind_time.isoformat(), None)
+        (user_id, channel_id, args, remind_time.isoformat(), None)
     )
     conn.commit()
 
@@ -265,19 +273,18 @@ async def check_reminders():
         return
 
     for row in rows:
-        rid, user_id, channel_id, task, repeat = row
-        try:
-            channel = bot.get_channel(int(channel_id))
-            if channel:
-                embed = discord.Embed(
-                    title="⏰ Напоминание!",
-                    description=f"{task}",
-                    color=discord.Color.gold()
-                )
-                await channel.send(f"<@{user_id}>", embed=embed)
-        except Exception as e:
-            print(f"Ошибка при отправке напоминания пользователю {user_id}: {e}")
+    rid, user_id, channel_id, task, repeat = row
+    try:
+        channel = bot.get_channel(int(channel_id))
+        if channel:
+            embed = discord.Embed(
+                title="⏰ Напоминание!",
+                description=f"<@{user_id}> — {task}",
+                color=discord.Color.gold()
+            )
+            await channel.send(f"<@{user_id}>", embed=embed)
 
+        # Удаление или обновление времени
         if repeat == "daily":
             new_time = now + datetime.timedelta(days=1)
         elif repeat == "hourly":
@@ -288,6 +295,11 @@ async def check_reminders():
             continue
 
         cursor.execute("UPDATE reminders SET remind_time=? WHERE id=?", (new_time.isoformat(), rid))
+        conn.commit()
+
+    except Exception as e:
+        print(f"Ошибка при отправке напоминания пользователю {user_id}: {e}")
+        cursor.execute("DELETE FROM reminders WHERE id=?", (rid,))
         conn.commit()
         
 @bot.command(name="help")
