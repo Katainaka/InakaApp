@@ -94,34 +94,41 @@ async def on_ready():
 
 
 @bot.command(name="add")
-async def add(ctx, name: str, *, time_str: str):
-    remind_time = parse_relative_time(time_str)
-
-    if not remind_time:
-        remind_time = dateparser.parse(time_str, settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True})
-
-    if not remind_time:
-        await ctx.message.add_reaction("❌")
-        return
-
-    user_id = str(ctx.author.id)
-    channel_id = str(ctx.channel.id)
-
-    cursor.execute(
-        "INSERT INTO reminders (user_id, channel_id, task, remind_time, repeat_interval) VALUES (?, ?, ?, ?, ?)",
-        (user_id, channel_id, name, remind_time.isoformat(), None)
-    )
-    conn.commit()
-
-    await ctx.message.add_reaction("✅")
-    
-@bot.command(name="testdelete")
-async def testdelete(ctx):
+async def add(ctx, *, args: str):
+    # Разбиваем введённое сообщение на части
     try:
-        await ctx.message.delete()
-        print("✅ Сообщение успешно удалено через testdelete")
+        split_index = args.rfind(' ')  # Ищем последний пробел
+        if split_index == -1:
+            raise ValueError("Не удалось разделить задачу и время")
+
+        name = args[:split_index].strip()
+        time_str = args[split_index+1:].strip()
+
+        # Парсим время
+        remind_time = parse_relative_time(time_str)
+        if not remind_time:
+            remind_time = dateparser.parse(time_str, settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True})
+
+        if not remind_time:
+            await ctx.message.add_reaction("❌")
+            return
+
+        user_id = str(ctx.author.id)
+        channel_id = str(ctx.channel.id)
+
+        cursor.execute(
+            "INSERT INTO reminders (user_id, channel_id, task, remind_time, repeat_interval) VALUES (?, ?, ?, ?, ?)",
+            (user_id, channel_id, name, remind_time.isoformat(), None)
+        )
+        conn.commit()
+
+        await ctx.message.add_reaction("✅")
+
     except Exception as e:
-        print(f"❌ Ошибка при удалении: {e}")
+        print(f"Ошибка при добавлении задачи: {e}")
+        await ctx.message.add_reaction("❌")
+    
+
 
 @bot.command(name="list")
 async def list_tasks(ctx):
