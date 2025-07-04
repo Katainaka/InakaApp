@@ -95,38 +95,44 @@ async def on_ready():
 
 @bot.command(name="add")
 async def add(ctx, *, args: str):
-    # Разбиваем введённое сообщение на части
-    try:
-        split_index = args.rfind(' ')  # Ищем последний пробел
-        if split_index == -1:
-            raise ValueError("Не удалось разделить задачу и время")
+    # Пытаемся отделить время от задачи (по последнему числу или ключевому слову)
+    time_keywords = ['через', 'в', 'на', 'tomorrow', 'today', 'at', 'in', 'on']
 
-        name = args[:split_index].strip()
-        time_str = args[split_index+1:].strip()
+    words = args.split()
+    split_index = -1
 
-        # Парсим время
-        remind_time = parse_relative_time(time_str)
-        if not remind_time:
-            remind_time = dateparser.parse(time_str, settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True})
+    # Ищем возможное начало временной метки
+    for i in reversed(range(len(words))):
+        if words[i].lower() in time_keywords or any(c.isdigit() for c in words[i]):
+            split_index = i
+            break
 
-        if not remind_time:
-            await ctx.message.add_reaction("❌")
-            return
+    if split_index == -1:
+        # Не нашли ни одного подходящего слова → попробуй разделить по последнему слову
+        split_index = len(words) - 1
 
-        user_id = str(ctx.author.id)
-        channel_id = str(ctx.channel.id)
+    name = " ".join(words[:split_index]).strip()
+    time_str = " ".join(words[split_index:]).strip()
 
-        cursor.execute(
-            "INSERT INTO reminders (user_id, channel_id, task, remind_time, repeat_interval) VALUES (?, ?, ?, ?, ?)",
-            (user_id, channel_id, name, remind_time.isoformat(), None)
-        )
-        conn.commit()
+    # Парсим время
+    remind_time = parse_relative_time(time_str)
+    if not remind_time:
+        remind_time = dateparser.parse(time_str, settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True})
 
-        await ctx.message.add_reaction("✅")
-
-    except Exception as e:
-        print(f"Ошибка при добавлении задачи: {e}")
+    if not remind_time:
         await ctx.message.add_reaction("❌")
+        return
+
+    user_id = str(ctx.author.id)
+    channel_id = str(ctx.channel.id)
+
+    cursor.execute(
+        "INSERT INTO reminders (user_id, channel_id, task, remind_time, repeat_interval) VALUES (?, ?, ?, ?, ?)",
+        (user_id, channel_id, name, remind_time.isoformat(), None)
+    )
+    conn.commit()
+
+    await ctx.message.add_reaction("✅")
     
 
 
