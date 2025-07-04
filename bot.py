@@ -274,7 +274,7 @@ async def check_reminders():
                     description=f"<@{user_id}> — {task}",
                     color=discord.Color.gold()
                 )
-                await channel.send(embed=embed)
+                await channel.send(f"<@{user_id}>", embed=embed)
         except Exception as e:
             print(f"Ошибка при отправке напоминания пользователю {user_id}: {e}")
 
