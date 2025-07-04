@@ -191,7 +191,27 @@ async def list_tasks(ctx):
             await message.edit(embed=embed, view=self)
 
     view = TaskView(tasks)
-    await ctx.send(embed=discord.Embed(title="📋 Загрузка задач...", color=discord.Color.blue()), view=view, delete_after=60)
+
+# Создаём временный Embed с первой страницей
+start_embed = discord.Embed(
+    title="📋 Ваши задачи — Страница 1",
+    color=discord.Color.blue()
+)
+for idx, (tid, task, remind_time_str, repeat) in enumerate(tasks[:view.page_size], start=1):
+    remind_time = datetime.datetime.fromisoformat(remind_time_str)
+    timestamp = int(remind_time.timestamp())
+    repeat_text = f"🔄 {repeat}" if repeat else ""
+    start_embed.add_field(
+        name=f"{idx}. {task}",
+        value=f"<t:{timestamp}:R> {repeat_text}", inline=False
+    )
+
+# Отправляем сообщение с первой страницей и кнопками
+msg = await ctx.send(embed=start_embed, view=view, delete_after=60)
+
+# Обновляем View и кнопки
+await view.update_message(msg)
+
 
 @tasks.loop(seconds=10)
 async def check_reminders():
