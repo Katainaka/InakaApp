@@ -9,6 +9,7 @@ import pytz
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
+from functools import partial
 
 def parse_relative_time(time_str):
     """Парсим относительное время вроде '10m', '2h', '3d'"""
@@ -134,43 +135,43 @@ async def list_tasks(ctx):
             page_tasks = self.user_tasks[start_idx:end_idx]
 
             for idx, (task_id, task, remind_time_str, repeat) in enumerate(page_tasks, start=1):
-                remind_time = datetime.datetime.fromisoformat(remind_time_str)
-                timestamp = int(remind_time.timestamp())
-                repeat_text = f"🔄 {repeat}" if repeat else ""
                 button_label = f"❌ Удалить {idx}"
                 btn = Button(label=button_label, style=discord.ButtonStyle.red)
 
-                async def remove_callback(interaction, t_id=task_id):
-                    with sqlite3.connect('reminders.db') as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM reminders WHERE id=?", (t_id,))
-                        conn.commit()
-                    await interaction.response.send_message(f"🗑 Задача удалена.", ephemeral=True)
-                    self.user_tasks = [t for t in self.user_tasks if t[0] != t_id]
-                    if not self.user_tasks:
-                        await interaction.message.edit(embed=discord.Embed(title="📭 Нет задач", color=discord.Color.orange()), view=None)
-                    else:
-                        await self.update_message(interaction.message)
-
-                btn.callback = remove_callback
+                # Исправляем замыкание: используем partial
+                btn.callback = partial(self.remove_callback, t_id=task_id)
                 self.add_item(btn)
 
             if len(self.user_tasks) > self.page_size:
                 prev_btn = Button(label="⬅️", disabled=self.current_page == 0)
                 next_btn = Button(label="➡️", disabled=(end_idx >= len(self.user_tasks)))
 
-                async def prev_callback(interaction):
-                    self.current_page -= 1
-                    await self.update_message(interaction.message)
+                prev_btn.callback = self.prev_page
+                next_btn.callback = self.next_page
 
-                async def next_callback(interaction):
-                    self.current_page += 1
-                    await self.update_message(interaction.message)
-
-                prev_btn.callback = prev_callback
-                next_btn.callback = next_callback
                 self.add_item(prev_btn)
                 self.add_item(next_btn)
+
+        async def remove_callback(self, interaction, t_id):
+            with sqlite3.connect('reminders.db') as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM reminders WHERE id=?", (t_id,))
+                conn.commit()
+
+            await interaction.response.send_message(f"🗑 Задача удалена.", ephemeral=True)
+            self.user_tasks = [t for t in self.user_tasks if t[0] != t_id]
+            if not self.user_tasks:
+                await interaction.message.edit(embed=discord.Embed(title="📭 Нет задач", color=discord.Color.orange()), view=None)
+            else:
+                await self.update_message(interaction.message)
+
+        async def prev_page(self, interaction):
+            self.current_page -= 1
+            await self.update_message(interaction.message)
+
+        async def next_page(self, interaction):
+            self.current_page += 1
+            await self.update_message(interaction.message)
 
         async def update_message(self, message):
             start_idx = self.current_page * self.page_size
@@ -185,32 +186,32 @@ async def list_tasks(ctx):
                 remind_time = datetime.datetime.fromisoformat(remind_time_str)
                 timestamp = int(remind_time.timestamp())
                 repeat_text = f"🔄 {repeat}" if repeat else ""
-                embed.add_field(name=f"{idx + start_idx}. {task}",
-                                value=f"<t:{timestamp}:R> {repeat_text}", inline=False)
+                embed.add_field(
+                    name=f"{idx + start_idx}. {task}",
+                    value=f"<t:{timestamp}:R> {repeat_text}",
+                    inline=False
+                )
+
             self.update_buttons()
             await message.edit(embed=embed, view=self)
 
     view = TaskView(tasks)
 
-# Создаём временный Embed с первой страницей
-start_embed = discord.Embed(
-    title="📋 Ваши задачи — Страница 1",
-    color=discord.Color.blue()
-)
-for idx, (tid, task, remind_time_str, repeat) in enumerate(tasks[:view.page_size], start=1):
-    remind_time = datetime.datetime.fromisoformat(remind_time_str)
-    timestamp = int(remind_time.timestamp())
-    repeat_text = f"🔄 {repeat}" if repeat else ""
-    start_embed.add_field(
-        name=f"{idx}. {task}",
-        value=f"<t:{timestamp}:R> {repeat_text}", inline=False
+    # Отправляем сообщение с первой страницей сразу
+    start_embed = discord.Embed(
+        title=f"📋 Ваши задачи — Страница 1",
+        color=discord.Color.blue()
     )
+    for idx, (tid, task, remind_time_str, repeat) in enumerate(tasks[:view.page_size], start=1):
+        remind_time = datetime.datetime.fromisoformat(remind_time_str)
+        timestamp = int(remind_time.timestamp())
+        repeat_text = f"🔄 {repeat}" if repeat else ""
+        start_embed.add_field(
+            name=f"{idx}. {task}",
+            value=f"<t:{timestamp}:R> {repeat_text}", inline=False
+        )
 
-# Отправляем сообщение с первой страницей и кнопками
-msg = await ctx.send(embed=start_embed, view=view, delete_after=60)
-
-# Обновляем View и кнопки
-await view.update_message(msg)
+    await ctx.send(embed=start_embed, view=view, delete_after=60)
 
 
 @tasks.loop(seconds=10)
