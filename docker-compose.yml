@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build: .
+    container_name: discord-bot
+    restart: unless-stopped
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}  # лучше хранить в .env или через Portainer UI
+    volumes:
+      - ./data:/app/data   # Для хранения базы reminders.db вне контейнера
+    ports:
+      - "8080:8080"        # Порт для Flask-сервера keep-alive
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
