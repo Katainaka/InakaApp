@@ -94,7 +94,12 @@ async def add(ctx, *, args: str):
     if not remind_time or remind_time < datetime.datetime.now(tz=pytz.utc):
         await ctx.send("❌ Не удалось определить будущее время.", delete_after=10)
         return
-
+        
+    time_diff = (remind_time - datetime.datetime.now(tz=pytz.utc)).total_seconds()
+    if time_diff < 60:
+        await ctx.send("Напоминание слишком близко. Установите время хотя бы на минуту вперёд.", delete_after=10)
+        return
+        
     if not task_text.strip():
         task_text = "Без названия"
 
@@ -153,6 +158,17 @@ async def list_tasks(ctx):
                 self.add_item(next_btn)
 
         async def remove_callback(self, interaction, t_id):
+            # Проверка: принадлежит ли задача пользователю
+            with sqlite3.connect('reminders.db') as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM reminders WHERE id=?", (t_id,))
+                row = cursor.fetchone()
+
+            if not row or str(interaction.user.id) != row[0]:
+                await interaction.response.send_message("🚫 Вы не можете удалить это напоминание.", ephemeral=True)
+                return
+
+            # Удаляем
             with sqlite3.connect('reminders.db') as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM reminders WHERE id=?", (t_id,))
@@ -164,6 +180,7 @@ async def list_tasks(ctx):
                 await interaction.message.edit(embed=discord.Embed(title="📭 Нет задач", color=discord.Color.orange()), view=None)
             else:
                 await self.update_message(interaction.message)
+
 
         async def prev_page(self, interaction):
             self.current_page -= 1
@@ -250,3 +267,4 @@ def keep_alive(): Thread(target=run).start()
 
 keep_alive()
 bot.run(os.getenv("DISCORD_TOKEN"))
+
