@@ -1,270 +1,107 @@
-import discord
-from discord.ext import commands, tasks
-from discord.ui import View, Button
-import dateparser
-import datetime
-import sqlite3
 import os
-import pytz
+import sqlite3
+import asyncio
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from flask import Flask
-from threading import Thread
-from functools import partial
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-def parse_relative_time(time_str):
-    """Парсим относительное время вроде '10m', '2h', '3d'"""
-    time_str = time_str.lower()
-    now = datetime.datetime.now(pytz.utc)
-    try:
-        if time_str.endswith('h') and time_str[:-1].isdigit():
-            return now + datetime.timedelta(hours=int(time_str[:-1]))
-        elif time_str.endswith('m') and time_str[:-1].isdigit():
-            return now + datetime.timedelta(minutes=int(time_str[:-1]))
-        elif time_str.endswith('d') and time_str[:-1].isdigit():
-            return now + datetime.timedelta(days=int(time_str[:-1]))
-    except:
-        return None
-    return None
-
-# Загрузка токена из .env
 load_dotenv()
 
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="rm ", intents=intents, help_command=None)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DB_PATH = '/app/data/reminders.db'  # путь к базе данных внутри volume
 
-moscow_tz = pytz.timezone("Europe/Moscow")
-
-# Инициализация БД
 def init_db():
-    with sqlite3.connect('reminders.db') as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
-                channel_id TEXT,
-                task TEXT,
-                remind_time TEXT,
-                repeat_interval TEXT
+                user_id INTEGER,
+                text TEXT,
+                remind_at TEXT
             )
         ''')
         conn.commit()
-init_db()
 
-def format_time_left(remind_time):
-    now = datetime.datetime.now(pytz.utc)
-    delta = remind_time - now
-    if delta.total_seconds() <= 0:
-        return "⚠️ Прошло"
-    days, seconds = divmod(delta.total_seconds(), 86400)
-    hours, remainder = divmod(seconds, 3600)
-    minutes, _ = divmod(remainder, 60)
-    return f"{int(days)}д {int(hours)}ч {int(minutes)}м"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Используй /add <время> <текст> для добавления напоминания.")
 
-@bot.event
-async def on_ready():
-    print(f'✅ Бот {bot.user} запущен!')
-    check_reminders.start()
-
-@bot.command(name="add")
-async def add(ctx, *, args: str):
-    # Автоудаление команды пользователя через 10 секунд
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await ctx.message.delete(delay=10)
-    except:
-        pass
-
-    # Разбиваем строку на текст задачи и время
-    words = args.strip().split()
-    remind_time = None
-    task_text = args
-
-    # Ищем время в конце строки
-    for i in range(len(words), 0, -1):
-        time_candidate = " ".join(words[i-1:])
-        remind_time = parse_relative_time(time_candidate) or dateparser.parse(
-            time_candidate,
-            settings={'TIMEZONE': '+0300', 'RETURN_AS_TIMEZONE_AWARE': True, 'PREFER_DATES_FROM': 'future'}
-        )
-        if remind_time:
-            task_text = " ".join(words[:i-1])
-            break
-
-    if not remind_time or remind_time < datetime.datetime.now(tz=pytz.utc):
-        await ctx.send("❌ Не удалось определить будущее время.", delete_after=10)
-        return
+        time_str = context.args[0]
+        text = ' '.join(context.args[1:])
+        remind_at = datetime.now() + timedelta(minutes=int(time_str))
         
-    time_diff = (remind_time - datetime.datetime.now(tz=pytz.utc)).total_seconds()
-    if time_diff < 60:
-        await ctx.send("Напоминание слишком близко. Установите время хотя бы на минуту вперёд.", delete_after=10)
-        return
-        
-    if not task_text.strip():
-        task_text = "Без названия"
-
-    with sqlite3.connect('reminders.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO reminders (user_id, channel_id, task, remind_time, repeat_interval) VALUES (?, ?, ?, ?, ?)",
-            (str(ctx.author.id), str(ctx.channel.id), task_text.strip(), remind_time.isoformat(), None)
-        )
-        conn.commit()
-    await ctx.message.add_reaction("✅")
-
-@bot.command(name="list")
-async def list_tasks(ctx):
-    user_id = str(ctx.author.id)
-    with sqlite3.connect('reminders.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, task, remind_time, repeat_interval FROM reminders WHERE user_id=?", (user_id,))
-        tasks = cursor.fetchall()
-
-    if not tasks:
-        embed = discord.Embed(title="📭 Нет задач", description="У вас нет активных задач.", color=discord.Color.orange())
-        await ctx.send(embed=embed, delete_after=60)
-        return
-
-    class TaskView(View):
-        def __init__(self, user_tasks):
-            super().__init__(timeout=60)
-            self.user_tasks = user_tasks
-            self.current_page = 0
-            self.page_size = 5
-            self.update_buttons()
-
-        def update_buttons(self):
-            self.clear_items()
-            start_idx = self.current_page * self.page_size
-            end_idx = start_idx + self.page_size
-            page_tasks = self.user_tasks[start_idx:end_idx]
-
-            for idx, (task_id, task, remind_time_str, repeat) in enumerate(page_tasks, start=1):
-                button_label = f"❌ Удалить {idx}"
-                btn = Button(label=button_label, style=discord.ButtonStyle.red)
-
-                # Исправляем замыкание: используем partial
-                btn.callback = partial(self.remove_callback, t_id=task_id)
-                self.add_item(btn)
-
-            if len(self.user_tasks) > self.page_size:
-                prev_btn = Button(label="⬅️", disabled=self.current_page == 0)
-                next_btn = Button(label="➡️", disabled=(end_idx >= len(self.user_tasks)))
-
-                prev_btn.callback = self.prev_page
-                next_btn.callback = self.next_page
-
-                self.add_item(prev_btn)
-                self.add_item(next_btn)
-
-        async def remove_callback(self, interaction, t_id):
-            # Проверка: принадлежит ли задача пользователю
-            with sqlite3.connect('reminders.db') as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT user_id FROM reminders WHERE id=?", (t_id,))
-                row = cursor.fetchone()
-
-            if not row or str(interaction.user.id) != row[0]:
-                await interaction.response.send_message("🚫 Вы не можете удалить это напоминание.", ephemeral=True)
-                return
-
-            # Удаляем
-            with sqlite3.connect('reminders.db') as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM reminders WHERE id=?", (t_id,))
-                conn.commit()
-
-            await interaction.response.send_message(f"🗑 Задача удалена.", ephemeral=True)
-            self.user_tasks = [t for t in self.user_tasks if t[0] != t_id]
-            if not self.user_tasks:
-                await interaction.message.edit(embed=discord.Embed(title="📭 Нет задач", color=discord.Color.orange()), view=None)
-            else:
-                await self.update_message(interaction.message)
-
-
-        async def prev_page(self, interaction):
-            self.current_page -= 1
-            await self.update_message(interaction.message)
-
-        async def next_page(self, interaction):
-            self.current_page += 1
-            await self.update_message(interaction.message)
-
-        async def update_message(self, message):
-            start_idx = self.current_page * self.page_size
-            end_idx = start_idx + self.page_size
-            page_tasks = self.user_tasks[start_idx:end_idx]
-
-            embed = discord.Embed(
-                title=f"📋 Ваши задачи — Страница {self.current_page+1}/{(len(self.user_tasks)-1)//self.page_size+1}",
-                color=discord.Color.blue()
-            )
-            for idx, (tid, task, remind_time_str, repeat) in enumerate(page_tasks, start=1):
-                remind_time = datetime.datetime.fromisoformat(remind_time_str)
-                timestamp = int(remind_time.timestamp())
-                repeat_text = f"🔄 {repeat}" if repeat else ""
-                embed.add_field(
-                    name=f"{idx + start_idx}. {task}",
-                    value=f"<t:{timestamp}:R> {repeat_text}",
-                    inline=False
-                )
-
-            self.update_buttons()
-            await message.edit(embed=embed, view=self)
-
-    view = TaskView(tasks)
-
-    # Отправляем сообщение с первой страницей сразу
-    start_embed = discord.Embed(
-        title=f"📋 Ваши задачи — Страница 1",
-        color=discord.Color.blue()
-    )
-    for idx, (tid, task, remind_time_str, repeat) in enumerate(tasks[:view.page_size], start=1):
-        remind_time = datetime.datetime.fromisoformat(remind_time_str)
-        timestamp = int(remind_time.timestamp())
-        repeat_text = f"🔄 {repeat}" if repeat else ""
-        start_embed.add_field(
-            name=f"{idx}. {task}",
-            value=f"<t:{timestamp}:R> {repeat_text}", inline=False
-        )
-
-    await ctx.send(embed=start_embed, view=view, delete_after=60)
-
-
-@tasks.loop(seconds=10)
-async def check_reminders():
-    now = datetime.datetime.now(tz=pytz.utc)
-    with sqlite3.connect('reminders.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, user_id, channel_id, task, repeat_interval FROM reminders WHERE remind_time <= ?", (now.isoformat(),))
-        rows = cursor.fetchall()
-
-    for rid, user_id, channel_id, task, repeat in rows:
-        channel = bot.get_channel(int(channel_id))
-        if channel:
-            try:
-                embed = discord.Embed(title="⏰ Напоминание!", description=f"{task}", color=discord.Color.gold())
-                await channel.send(f"<@{user_id}>", embed=embed)
-            except Exception as e:
-                print(f"⚠️ Ошибка отправки: {e}")
-        with sqlite3.connect('reminders.db') as conn:
+        with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
-            if repeat == "daily":
-                next_time = now + datetime.timedelta(days=1)
-                cursor.execute("UPDATE reminders SET remind_time=? WHERE id=?", (next_time.isoformat(), rid))
-            elif repeat == "hourly":
-                next_time = now + datetime.timedelta(hours=1)
-                cursor.execute("UPDATE reminders SET remind_time=? WHERE id=?", (next_time.isoformat(), rid))
-            else:
-                cursor.execute("DELETE FROM reminders WHERE id=?", (rid,))
+            cursor.execute('INSERT INTO reminders (user_id, text, remind_at) VALUES (?, ?, ?)', (
+                update.effective_user.id,
+                text,
+                remind_at.isoformat()
+            ))
             conn.commit()
 
-app = Flask(__name__)
-@app.route("/")
-def index(): return "Бот работает!"
-def run(): app.run(host='0.0.0.0', port=8080)
-def keep_alive(): Thread(target=run).start()
+        await update.message.reply_text(f"Напоминание добавлено на {remind_at.strftime('%H:%M:%S')}: {text}")
+    except (IndexError, ValueError):
+        await update.message.reply_text("Неправильный формат. Используй: /add <минуты> <текст>")
 
-keep_alive()
-bot.run(os.getenv("DISCORD_TOKEN"))
+async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, text, remind_at FROM reminders WHERE user_id = ?', (update.effective_user.id,))
+        rows = cursor.fetchall()
 
+    if not rows:
+        await update.message.reply_text("У вас нет активных напоминаний.")
+    else:
+        response = "\n".join([f"{row[0]}: {row[1]} (в {row[2]})" for row in rows])
+        await update.message.reply_text(response)
+
+async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        reminder_id = int(context.args[0])
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM reminders WHERE id = ? AND user_id = ?', (
+                reminder_id,
+                update.effective_user.id
+            ))
+            conn.commit()
+        await update.message.reply_text(f"Напоминание {reminder_id} удалено.")
+    except (IndexError, ValueError):
+        await update.message.reply_text("Используй: /delete <id>")
+
+async def check_reminders(application):
+    while True:
+        now = datetime.now()
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, user_id, text FROM reminders WHERE remind_at <= ?', (now.isoformat(),))
+            reminders = cursor.fetchall()
+
+            for reminder in reminders:
+                user_id = reminder[1]
+                text = reminder[2]
+                await application.bot.send_message(chat_id=user_id, text=f"🔔 Напоминание: {text}")
+                cursor.execute('DELETE FROM reminders WHERE id = ?', (reminder[0],))
+
+            conn.commit()
+        await asyncio.sleep(60)
+
+async def main():
+    init_db()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add", add))
+    app.add_handler(CommandHandler("list", list_tasks))
+    app.add_handler(CommandHandler("delete", delete))
+
+    # Запуск фона
+    app.job_queue.run_repeating(lambda _: asyncio.create_task(check_reminders(app)), interval=60, first=0)
+
+    await app.run_polling()
+
+if __name__ == '__main__':
+    asyncio.run(main())
